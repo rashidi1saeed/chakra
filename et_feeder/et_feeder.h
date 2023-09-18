@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 #include <queue>
 #include <unordered_map>
 #include <unordered_set>
@@ -9,6 +10,13 @@
 #include "et_feeder/et_feeder_node.h"
 
 namespace Chakra {
+struct CompareNodes : public std::binary_function<std::shared_ptr<ETFeederNode>, std::shared_ptr<ETFeederNode>, bool>
+{
+  bool operator()(const std::shared_ptr<ETFeederNode> lhs, const std::shared_ptr<ETFeederNode> rhs) const
+  {
+      return lhs->getChakraNode()->id() > rhs->getChakraNode()->id();
+  }
+};
 
 class ETFeeder {
  public:
@@ -23,6 +31,8 @@ class ETFeeder {
   std::shared_ptr<ETFeederNode> lookupNode(uint64_t node_id);
   void freeChildrenNodes(uint64_t node_id);
 
+  std::unordered_map<uint64_t, std::shared_ptr<ETFeederNode>> dep_graph_{};
+  std::priority_queue<std::shared_ptr<ETFeederNode>, std::vector<std::shared_ptr<ETFeederNode>>, CompareNodes> dep_free_node_queue_{};
  private:
   std::shared_ptr<ETFeederNode> readNode();
   void readNextWindow();
@@ -32,9 +42,7 @@ class ETFeeder {
   const uint32_t window_size_;
   bool et_complete_;
 
-  std::unordered_map<uint64_t, std::shared_ptr<ETFeederNode>> dep_graph_{};
   std::unordered_set<uint64_t> dep_free_node_id_set_{};
-  std::queue<std::shared_ptr<ETFeederNode>> dep_free_node_queue_{};
   std::unordered_set<std::shared_ptr<ETFeederNode>> dep_unresolved_node_set_{};
 };
 

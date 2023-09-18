@@ -30,7 +30,7 @@ bool ETFeeder::hasNodesToIssue() {
 
 shared_ptr<ETFeederNode> ETFeeder::getNextIssuableNode() {
   if (dep_free_node_queue_.size() != 0) {
-    shared_ptr<ETFeederNode> node = dep_free_node_queue_.front();
+    shared_ptr<ETFeederNode> node = dep_free_node_queue_.top();
     dep_free_node_id_set_.erase(node->getChakraNode()->id());
     dep_free_node_queue_.pop();
     return node;
@@ -69,13 +69,11 @@ void ETFeeder::freeChildrenNodes(uint64_t node_id) {
 }
 
 shared_ptr<ETFeederNode> ETFeeder::readNode() {
-  shared_ptr<ETFeederNode> node = make_shared<ETFeederNode>();
   shared_ptr<ChakraProtoMsg::Node> pkt_msg = make_shared<ChakraProtoMsg::Node>();
-
   if (!trace_.read(*pkt_msg)) {
     return nullptr;
   }
-  node->setChakraNode(pkt_msg);
+  shared_ptr<ETFeederNode> node = make_shared<ETFeederNode>(pkt_msg);
 
   bool dep_unresolved = false;
   for (int i = 0; i < pkt_msg->parent_size(); ++i) {
