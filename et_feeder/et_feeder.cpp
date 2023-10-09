@@ -65,8 +65,8 @@ void ETFeeder::freeChildrenNodes(uint64_t node_id) {
       dep_free_node_id_set_.emplace(child_chakra->id());
       dep_free_node_queue_.emplace(child);
     }
+    }
   }
-}
 
 shared_ptr<ETFeederNode> ETFeeder::readNode() {
   shared_ptr<ChakraProtoMsg::Node> pkt_msg = make_shared<ChakraProtoMsg::Node>();

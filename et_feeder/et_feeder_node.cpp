@@ -8,6 +8,7 @@ ETFeederNode::ETFeederNode(std::shared_ptr<ChakraProtoMsg::Node> node) {
   this->id_ = node->id();
   this->name_ = node->name();
   this->runtime_ = 0;
+  this->is_host_op_ = true;
   for (int i = 0; i < node->attribute_size(); i++) {
     string attr_name = node->attribute(i).name();
     if (attr_name == "is_host_op") {

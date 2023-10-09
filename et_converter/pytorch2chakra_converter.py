@@ -16,8 +16,6 @@ from et_def.et_def_pb2 import (
     INVALID_NODE,
     COMP_NODE,
     COMM_COLL_NODE,
-    KERNEL_COMP_NODE,
-    KERNEL_COMM_COLL_NODE,
     BOOL,
     FLOAT,
     UINT,
@@ -55,14 +53,26 @@ class PyTorch2ChakraConverter:
     @staticmethod
     def get_node_type(node: Dict[str, Any]) -> int:
         if "cat" in node.keys() and "ncclKernel" in node["name"]:
-            return KERNEL_COMM_COLL_NODE
+            return COMM_COLL_NODE
         elif "cat" in node.keys():
-            return KERNEL_COMP_NODE
+            return COMP_NODE
         elif "c10d::" in node["name"] or "nccl:" in node["name"]:
             return COMM_COLL_NODE
         elif node["op_schema"] != "" or node["outputs"]:
             return COMP_NODE
         return INVALID_NODE
+    
+    @staticmethod
+    def is_host_op(node: Dict[str, Any]) -> Boolean:
+        if "cat" in node.keys() and "ncclKernel" in node["name"]:
+            return False
+        elif "cat" in node.keys():
+            return False
+        elif "c10d::" in node["name"] or "nccl:" in node["name"]:
+            return True
+        elif node["op_schema"] != "" or node["outputs"]:
+            return True
+        assert False
 
     @staticmethod
     def get_attr(
@@ -233,6 +243,7 @@ class PyTorch2ChakraConverter:
             pytorch_et_data: Dict[str, Any],
             pt_node_dict: Dict[int, Dict[str, Any]],
             pt_gpu_node_dict: Dict[int, List[Dict[str, Any]]],
+            root_id: int,
             print_calls: bool
     ) -> int:
         if self.detect_type(node) == 'gpu_operator':
@@ -246,10 +257,10 @@ class PyTorch2ChakraConverter:
         else:
             answer=-1
             for pt_node in pytorch_et_data["nodes"]:
-                if (pt_node['parent'] == node['id']) and ("## forward ##" not in pt_node['name']) and ("## sparse_data_dist ##" not in pt_node['name']) and ("## backward ##" not in pt_node['name']) and ("## optimizer ##" not in pt_node['name']) and ("[pytorch|profiler|execution_graph|thread]" not in pt_node['name']):
+                if (pt_node['parent'] == node['id']) and pt_node['id']!=root_id and not (pt_node['name'].startswith("## ") and pt_node['parent']==root_id):
                     if(print_calls):
                         print("child of node: "+str(node['id'])+" is: "+str(pt_node['id']))
-                    answer= max(answer,self.dfs(pt_node, pytorch_et_data, pt_node_dict,pt_gpu_node_dict,print_calls))
+                    answer= max(answer,self.dfs(pt_node, pytorch_et_data, pt_node_dict,pt_gpu_node_dict,root_id,print_calls))
             return answer
     def assign_ids(
             self,
@@ -358,6 +369,13 @@ class PyTorch2ChakraConverter:
             attr.i = 0
         ck_node.attribute.append(attr)
 
+        attr = ChakraAttr(name="is_host_op", type=BOOL)
+        if self.is_host_op(pt_node):
+            attr.b=True
+        else:
+            attr.b=False
+        ck_node.attribute.append(attr)
+
         attr_names = ["fw_parent", "fw_tid", "op_schema", "parent", "seq_id", "rf_id", "scope", "tid"]
         attr_types = [INT, INT, STRING, INT, INT, INT, INT, INT]
         for attr_name, attr_type in zip(attr_names, attr_types):
@@ -381,27 +399,36 @@ class PyTorch2ChakraConverter:
                 open(self.output_filename, "wb") as chakra_et:
             pytorch_et_data = json.load(pytorch_et)
 
-            md = GlobalMetadata(
-              attribute=[
-                ChakraAttr(name="schema", type=STRING, s=pytorch_et_data["schema"]),
-                ChakraAttr(name="pid", type=UINT, u=pytorch_et_data["pid"]),
-                ChakraAttr(name="time", type=STRING, s=pytorch_et_data["time"]),
-                ChakraAttr(name="start_ts", type=UINT, u=pytorch_et_data["start_ts"]),
-                ChakraAttr(name="finish_ts", type=UINT, u=pytorch_et_data["finish_ts"])
-              ]
-            )
-            encode_message(chakra_et, md)
+            #md = GlobalMetadata(
+            #  attribute=[
+            #    ChakraAttr(name="schema", type=STRING, s=pytorch_et_data["schema"]),
+            #    ChakraAttr(name="pid", type=UINT, u=pytorch_et_data["pid"]),
+            #    ChakraAttr(name="time", type=STRING, s=pytorch_et_data["time"]),
+            #    ChakraAttr(name="start_ts", type=UINT, u=pytorch_et_data["start_ts"]),
+            #    ChakraAttr(name="finish_ts", type=UINT, u=pytorch_et_data["finish_ts"])
+            #  ]
+            #)
+            #encode_message(chakra_et, md)
 
             pytorch_et_data["nodes"]=sorted(pytorch_et_data["nodes"], key=lambda kv: kv["ts"])
 
             total_runtime=self.get_total_runtime(pytorch_et_data)
             self.logger.info("total operators runtime (including child operators) in the entire PyTorch ET is: "+str(total_runtime*1000)+" ns, and # of ops are: "+str(self.pre_process_ops))
+            
+            root_id=-1
+            for pt_node in pytorch_et_data["nodes"]:
+                if  "[pytorch|profiler|execution_graph|thread]" in pt_node["name"]:
+                    root_id=pt_node["id"]
+                    break
+            assert root_id != -1
 
             for pt_node in pytorch_et_data["nodes"]:
-                if ("[pytorch|profiler|execution_graph|thread]" in pt_node["name"]) or ("## forward ##" in pt_node['name'])  or ("## sparse_data_dist ##" in pt_node['name']) or ("## backward ##" in pt_node['name']) or ("## optimizer ##" in pt_node['name']):
-                    dep=self.dfs(pt_node, pytorch_et_data, pt_node_dict,pt_gpu_node_dict,False)
-                    if ("## forward ##" in pt_node['name']) or ("## backward ##" in pt_node['name']) or ("## optimizer ##" in pt_node['name']) or ("## sparse_data_dist ##" in pt_node['name']):
+                if (pt_node["id"] == root_id) or (pt_node['name'].startswith("## ") and pt_node['parent']==root_id):
+                    dep=self.dfs(pt_node, pytorch_et_data, pt_node_dict,pt_gpu_node_dict,root_id,False)
+                    if pt_node['name'].startswith("## ") and pt_node['parent']==root_id:
+                        #print("phase: "+pt_node['name']+" detected")
                         step_dependency.append(dep)
+            #print("****")
             step_dependency.sort()
 
 
@@ -459,14 +486,15 @@ class PyTorch2ChakraConverter:
                                     input_storage_id_node_id_dict.setdefault(storage_id, []).append(pt_gpu_node["id"])
                                 else:
                                     input_tensor_id_node_id_dict.setdefault(tensor_id, []).append(pt_gpu_node["id"])
-                        for o in pt_gpu_node["outputs"]:
-                            if isinstance(o, list) and len(o) == 6:
-                                tensor_id = o[0]
-                                storage_id = o[1]
-                                if storage_id > 0:
-                                    output_storage_id_node_id_dict.setdefault(storage_id, []).append(pt_gpu_node["id"])
-                                else:
-                                    output_tensor_id_node_id_dict.setdefault(tensor_id, []).append(pt_gpu_node["id"])
+                        #for o in pt_gpu_node["outputs"]:
+                        #    if isinstance(o, list) and len(o) == 6:
+                        #        tensor_id = o[0]
+                        #        storage_id = o[1]
+                        #        if storage_id > 0:
+                        #            continue
+                        #            output_storage_id_node_id_dict.setdefault(storage_id, []).append(pt_gpu_node["id"])
+                        #        else:
+                        #            output_tensor_id_node_id_dict.setdefault(tensor_id, []).append(pt_gpu_node["id"])
 
                 ck_node = self.convert_to_chakra_node(pt_node)
 
@@ -502,7 +530,7 @@ class PyTorch2ChakraConverter:
                 if (dep_node_id!=-1) and (dep_node_id not in ck_node.parent):
                     ck_node.parent.append(dep_node_id)
                 #Adding decomposed nodes dependency
-                if pt_node_id in decomposed_nodes_dep.keys() and pt_node_id not in ck_node.parent:
+                if pt_node_id in decomposed_nodes_dep.keys() and decomposed_nodes_dep[pt_node_id] not in ck_node.parent:
                      ck_node.parent.append(decomposed_nodes_dep[pt_node_id])
 
             self.logger.info("Encode data dependency with storage IDs")
