@@ -483,9 +483,8 @@ class PyTorch2ChakraConverter:
 
         # Make sure that the NIDs in inter_phase_dependency are in the increasing order.
         self.inter_phase_dependency.sort()
-    # TODO/Saeed: Use more readable name. It is not clear what kind of IDs are returned
-    # You can add more comments
-    def assign_ids(
+
+    def assign_chakra_ids(
         self,
         total_assigned_ids: Dict[int,bool],
         assigned_ids: List[int],
@@ -532,11 +531,11 @@ class PyTorch2ChakraConverter:
                 last_ts = node["ts"]
                 for i in range(len(self.pt_gpu_node_dict[nid])+1):
                     copy_node = copy.deepcopy(node)
-                    copy_node["id"] = self.assign_ids(total_assigned_ids, assigned_ids, nid)
+                    copy_node["id"] = self.assign_chakra_ids(total_assigned_ids, assigned_ids, nid)
                     copy_node["name"] = copy_node["name"]+"("+str(i)+")"
                     if i < len(self.pt_gpu_node_dict[nid]):
                         self.pt_gpu_node_dict[nid][i]["id"] =\
-                                self.assign_ids(
+                                self.assign_chakra_ids(
                                         total_assigned_ids,
                                         assigned_ids,
                                         self.pt_gpu_node_dict[nid][i]["id"])
@@ -556,7 +555,7 @@ class PyTorch2ChakraConverter:
                         decomposed_nodes_dep[copy_node["id"]] = decomposed_nodes[-1]["id"]
                     decomposed_nodes.append(copy_node)
             else:
-                node["id"] = self.assign_ids(total_assigned_ids, assigned_ids, nid)
+                node["id"] = self.assign_chakra_ids(total_assigned_ids, assigned_ids, nid)
                 decomposed_nodes.append(node)
 
         merged_pt_cpu_node_dict = {
